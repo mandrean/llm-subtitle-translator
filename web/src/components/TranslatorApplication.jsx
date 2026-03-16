@@ -1,6 +1,7 @@
 "use client"
 import React, { useEffect, useRef, useState } from 'react'
-import { Button, Input, Card, Textarea, Slider, Switch, CardHeader, CardBody, Divider } from "@nextui-org/react";
+import { Button, Input, Card, Textarea, Slider, Switch, CardHeader, CardBody, Divider, Select, SelectItem } from "@nextui-org/react";
+import OpenAI from "openai"
 
 import { EyeSlashFilledIcon } from './EyeSlashFilledIcon';
 import { EyeFilledIcon } from './EyeFilledIcon';
@@ -10,24 +11,63 @@ import { SubtitleCard } from '@/components/SubtitleCard';
 import { downloadString } from '@/utils/download';
 import { sampleSrt } from '@/data/sample';
 
-import { Translator, TranslatorStructuredArray, subtitleParser, createOpenAIClient, CooldownContext } from "chatgpt-subtitle-translator"
+import {
+  Translator,
+  TranslatorStructuredArray,
+  subtitleParser,
+  CooldownContext,
+  OpenAIProvider,
+  OllamaProvider,
+  OllamaQwen3_32B,
+  OllamaTranslateGemma12B,
+  OllamaTranslateGemma4B,
+} from "chatgpt-subtitle-translator"
 
-const OPENAI_API_KEY = "OPENAI_API_KEY"
-const OPENAI_BASE_URL = "OPENAI_BASE_URL"
-const RATE_LIMIT = "RATE_LIMIT"
-const MODEL = "MODEL"
+const STORAGE_PROVIDER = "PROVIDER"
+const STORAGE_OPENAI_API_KEY = "OPENAI_API_KEY"
+const STORAGE_OPENAI_BASE_URL = "OPENAI_BASE_URL"
+const STORAGE_OLLAMA_BASE_URL = "OLLAMA_BASE_URL"
+const STORAGE_RATE_LIMIT = "RATE_LIMIT"
+const STORAGE_MODEL = "MODEL"
 
-const DefaultModel = "gpt-4o-mini"
+const PROVIDERS = [
+  { key: "openai", label: "OpenAI" },
+  { key: "ollama", label: "Ollama" },
+]
+
+const DEFAULT_MODELS = {
+  openai: "gpt-4o-mini",
+  ollama: "",
+}
+
 const DefaultTemperature = 0
+
+/** Map well-known Ollama model names to their specific provider classes */
+function createOllamaProviderForModel(modelName, baseURL) {
+  if (modelName === 'qwen3:32b') return new OllamaQwen3_32B(baseURL, true)
+  if (modelName === 'translategemma:12b') return new OllamaTranslateGemma12B(baseURL, true)
+  if (modelName === 'translategemma:4b') return new OllamaTranslateGemma4B(baseURL, true)
+  return new OllamaProvider({ model: modelName, baseURL, dangerouslyAllowBrowser: true })
+}
+
+function RefreshIcon({ className }) {
+  return (
+    <svg className={className} xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M21.5 2v6h-6M2.5 22v-6h6M2 11.5a10 10 0 0 1 18.8-4.3M22 12.5a10 10 0 0 1-18.8 4.2" />
+    </svg>
+  )
+}
 
 export function TranslatorApplication() {
   // Translator Configuration
+  const [providerKey, setProviderKey] = useState("openai")
   const [APIvalue, setAPIValue] = useState("")
-  const [baseUrlValue, setBaseUrlValue] = useState(undefined)
+  const [openaiBaseUrl, setOpenaiBaseUrlValue] = useState(undefined)
+  const [ollamaBaseUrl, setOllamaBaseUrlValue] = useState(undefined)
   const [fromLanguage, setFromLanguage] = useState("")
   const [toLanguage, setToLanguage] = useState("English")
   const [systemInstruction, setSystemInstruction] = useState("")
-  const [model, setModel] = useState(DefaultModel)
+  const [model, setModel] = useState(DEFAULT_MODELS["openai"])
   const [temperature, setTemperature] = useState(DefaultTemperature)
   const [batchSizes, setBatchSizes] = useState([10, 50])
   const [useStructuredMode, setUseStructuredMode] = useState(true)
@@ -35,6 +75,11 @@ export function TranslatorApplication() {
 
   const [isAPIInputVisible, setIsAPIInputVisible] = useState(false)
   const toggleAPIInputVisibility = () => setIsAPIInputVisible(!isAPIInputVisible)
+  const [mounted, setMounted] = useState(false)
+
+  // Model list
+  const [availableModels, setAvailableModels] = useState([])
+  const [modelsLoading, setModelsLoading] = useState(false)
 
   // Translator State
   const [srtInputText, setSrtInputText] = useState(sampleSrt)
@@ -53,42 +98,63 @@ export function TranslatorApplication() {
 
   // Persistent Data Restoration
   useEffect(() => {
-    setAPIValue(localStorage.getItem(OPENAI_API_KEY) ?? "")
-    setRateLimit(Number(localStorage.getItem(RATE_LIMIT) ?? rateLimit))
-    setBaseUrlWithModerator(localStorage.getItem(OPENAI_BASE_URL) ?? undefined)
-    setModelValue(localStorage.getItem(MODEL) ?? DefaultModel)
+    const savedProvider = localStorage.getItem(STORAGE_PROVIDER) ?? "openai"
+    const savedOllamaUrl = localStorage.getItem(STORAGE_OLLAMA_BASE_URL) ?? undefined
+    setProviderKey(savedProvider)
+    setAPIValue(localStorage.getItem(STORAGE_OPENAI_API_KEY) ?? "")
+    setRateLimit(Number(localStorage.getItem(STORAGE_RATE_LIMIT) ?? rateLimit))
+    setOpenaiBaseUrlValue(localStorage.getItem(STORAGE_OPENAI_BASE_URL) ?? undefined)
+    setOllamaBaseUrlValue(savedOllamaUrl)
+    const savedModel = localStorage.getItem(STORAGE_MODEL)
+    setModel(savedModel ?? DEFAULT_MODELS[savedProvider] ?? "")
+    setMounted(true)
+    fetchModels(savedProvider, savedOllamaUrl)
   }, [])
 
+  function handleProviderChange(key) {
+    if (!key) return
+    localStorage.setItem(STORAGE_PROVIDER, key)
+    setProviderKey(key)
+    setAvailableModels([])
+    const defaultModel = DEFAULT_MODELS[key] ?? ""
+    setModel(defaultModel)
+    setModelValue(defaultModel)
+    setUseStructuredMode(key === "openai")
+    if (key === "ollama") {
+      fetchModels(key)
+    }
+  }
+
   function setAPIKey(value) {
-    localStorage.setItem(OPENAI_API_KEY, value)
+    localStorage.setItem(STORAGE_OPENAI_API_KEY, value)
     setAPIValue(value)
   }
 
-  function setBaseUrl(value) {
+  function setOpenaiBaseUrl(value) {
     if (!value) {
       value = undefined
-      localStorage.removeItem(OPENAI_BASE_URL)
+      localStorage.removeItem(STORAGE_OPENAI_BASE_URL)
+    } else {
+      localStorage.setItem(STORAGE_OPENAI_BASE_URL, value)
     }
-    if (value) {
-      localStorage.setItem(OPENAI_BASE_URL, value)
-    }
-    setBaseUrlWithModerator(value)
+    setOpenaiBaseUrlValue(value)
   }
 
-  function setBaseUrlWithModerator(value) {
-    if (!baseUrlValue && value) {
-      if (useStructuredMode) {
-        setUseStructuredMode(false)
-      }
+  function setOllamaBaseUrl(value) {
+    if (!value) {
+      value = undefined
+      localStorage.removeItem(STORAGE_OLLAMA_BASE_URL)
+    } else {
+      localStorage.setItem(STORAGE_OLLAMA_BASE_URL, value)
     }
-    setBaseUrlValue(value)
+    setOllamaBaseUrlValue(value)
   }
 
   /**
    * @param {string} value
    */
   function setRateLimitValue(value) {
-    localStorage.setItem(RATE_LIMIT, value)
+    localStorage.setItem(STORAGE_RATE_LIMIT, value)
     setRateLimit(Number(value))
   }
 
@@ -97,12 +163,64 @@ export function TranslatorApplication() {
    */
   function setModelValue(value) {
     if (!value) {
-      localStorage.removeItem(MODEL)
+      localStorage.removeItem(STORAGE_MODEL)
     }
     else {
-      localStorage.setItem(MODEL, value)
+      localStorage.setItem(STORAGE_MODEL, value)
     }
-    setModel(value)
+    setModel(value ?? "")
+  }
+
+  async function fetchModels(overrideProvider, overrideOllamaUrl) {
+    const provider = overrideProvider ?? providerKey
+    const ollamaUrl = overrideOllamaUrl !== undefined ? overrideOllamaUrl : ollamaBaseUrl
+    setModelsLoading(true)
+    try {
+      let client
+      if (provider === "openai") {
+        client = new OpenAI({
+          apiKey: APIvalue,
+          baseURL: openaiBaseUrl,
+          dangerouslyAllowBrowser: true,
+        })
+      } else {
+        client = new OpenAI({
+          apiKey: "ollama",
+          baseURL: ollamaUrl ?? "http://localhost:11434/v1",
+          dangerouslyAllowBrowser: true,
+        })
+      }
+      const response = await client.models.list()
+      const models = []
+      for await (const m of response) {
+        models.push(m.id)
+      }
+      models.sort()
+      setAvailableModels(models)
+    } catch (error) {
+      console.error("[UI] Failed to fetch models:", error)
+    } finally {
+      setModelsLoading(false)
+    }
+  }
+
+  function createProvider() {
+    if (providerKey === "openai") {
+      return new OpenAIProvider({
+        apiKey: APIvalue,
+        dangerouslyAllowBrowser: true,
+        baseURL: openaiBaseUrl,
+      }, model || undefined)
+    } else {
+      return createOllamaProviderForModel(model, ollamaBaseUrl)
+    }
+  }
+
+  function canStart() {
+    if (translatorRunningState) return false
+    if (providerKey === "openai" && !APIvalue) return false
+    if (providerKey === "ollama" && !model) return false
+    return true
   }
 
   async function generate(e) {
@@ -115,15 +233,18 @@ export function TranslatorApplication() {
     let currentStream = ""
     const outputWorkingProgress = subtitleParser.fromSrt(srtInputText)
     const currentOutputs = []
-    console.log("OPENAI_BASE_URL", baseUrlValue)
-    const openai = createOpenAIClient(APIvalue, true, baseUrlValue)
+
+    const provider = createProvider()
+    console.log("[User Interface]", "Provider:", provider.name, "Model:", model)
 
     const coolerChatGPTAPI = new CooldownContext(rateLimit, 60000, "ChatGPTAPI")
 
-    const TranslatorImplementation = useStructuredMode ? TranslatorStructuredArray : Translator
+    const effectiveStructuredMode = useStructuredMode && provider.supportsStructuredOutput
+
+    const TranslatorImplementation = effectiveStructuredMode ? TranslatorStructuredArray : Translator
 
     translatorRef.current = new TranslatorImplementation({ from: fromLanguage, to: toLanguage }, {
-      openai,
+      provider,
       cooler: coolerChatGPTAPI,
       onStreamChunk: (data) => {
         if (currentStream === '' && data === "\n") {
@@ -153,9 +274,9 @@ export function TranslatorApplication() {
       }
     }, {
       useModerator: false,
-      batchSizes: batchSizes, //[10, 50],
+      batchSizes: batchSizes,
       createChatCompletionRequest: {
-        model: model,
+        model: model || provider.defaultModel,
         temperature: temperature,
         stream: true
       },
@@ -198,6 +319,8 @@ export function TranslatorApplication() {
     }
   }
 
+  const isOllama = providerKey === "ollama"
+
   return (
     <>
       <div className='w-full'>
@@ -212,38 +335,70 @@ export function TranslatorApplication() {
               <CardBody>
                 <div className='flex flex-wrap justify-between w-full gap-4'>
                   <div className='flex flex-wrap md:flex-nowrap w-full gap-4'>
-                    <Input
-                      className="w-full md:w-6/12"
+                    <Select
+                      className="w-full md:w-4/12"
                       size='sm'
-                      // autoFocus={true}
-                      value={APIvalue}
-                      onValueChange={(value) => setAPIKey(value)}
-                      isRequired
-                      autoComplete='off'
-                      label="OpenAI API Key"
-                      variant="flat"
-                      description="API Key is stored locally in browser"
-                      endContent={
-                        <button className="focus:outline-none" type="button" onClick={toggleAPIInputVisibility}>
-                          {isAPIInputVisible ? (
-                            <EyeSlashFilledIcon className="text-2xl text-default-400 pointer-events-none" />
-                          ) : (
-                            <EyeFilledIcon className="text-2xl text-default-400 pointer-events-none" />
-                          )}
-                        </button>
-                      }
-                      type={isAPIInputVisible ? "text" : "password"}
-                    />
-                    <Input
-                      className='w-full md:w-6/12'
-                      size='sm'
-                      type="text"
-                      label="OpenAI Base Url"
-                      placeholder="https://api.openai.com/v1"
-                      autoComplete='on'
-                      value={baseUrlValue ?? ""}
-                      onValueChange={setBaseUrl}
-                    />
+                      label="LLM Provider"
+                      selectedKeys={mounted ? [providerKey] : []}
+                      onSelectionChange={(keys) => handleProviderChange([...keys][0])}
+                    >
+                      {PROVIDERS.map((p) => (
+                        <SelectItem key={p.key} value={p.key}>
+                          {p.label}
+                        </SelectItem>
+                      ))}
+                    </Select>
+
+                    {mounted && !isOllama && (
+                      <Input
+                        className="w-full md:w-4/12"
+                        size='sm'
+                        value={APIvalue}
+                        onValueChange={(value) => setAPIKey(value)}
+                        isRequired
+                        autoComplete='off'
+                        label="API Key"
+                        variant="flat"
+                        description="Stored locally in browser"
+                        endContent={
+                          <button className="focus:outline-none" type="button" onClick={toggleAPIInputVisibility}>
+                            {isAPIInputVisible ? (
+                              <EyeSlashFilledIcon className="text-2xl text-default-400 pointer-events-none" />
+                            ) : (
+                              <EyeFilledIcon className="text-2xl text-default-400 pointer-events-none" />
+                            )}
+                          </button>
+                        }
+                        type={isAPIInputVisible ? "text" : "password"}
+                      />
+                    )}
+
+                    {mounted && !isOllama && (
+                      <Input
+                        className='w-full md:w-4/12'
+                        size='sm'
+                        type="text"
+                        label="Base URL"
+                        placeholder="https://api.openai.com/v1"
+                        autoComplete='on'
+                        value={openaiBaseUrl ?? ""}
+                        onValueChange={setOpenaiBaseUrl}
+                      />
+                    )}
+
+                    {mounted && isOllama && (
+                      <Input
+                        className='w-full md:w-8/12'
+                        size='sm'
+                        type="text"
+                        label="Ollama URL"
+                        placeholder="http://localhost:11434/v1"
+                        autoComplete='on'
+                        value={ollamaBaseUrl ?? ""}
+                        onValueChange={setOllamaBaseUrl}
+                        description="Leave empty for default (localhost:11434)"
+                      />
+                    )}
                   </div>
 
                   <div className='flex w-full gap-4'>
@@ -280,16 +435,37 @@ export function TranslatorApplication() {
                   </div>
 
                   <div className='flex flex-wrap md:flex-nowrap w-full gap-4'>
-                    <div className='w-full md:w-1/5'>
-                      <Input
+                    <div className='w-full md:w-1/5 flex gap-1 items-start'>
+                      <Select
+                        className='flex-1'
                         size='sm'
-                        type="text"
                         label="Model"
-                        placeholder={DefaultModel}
-                        autoComplete='on'
-                        value={model}
-                        onValueChange={setModelValue}
-                      />
+                        placeholder={modelsLoading ? "Loading…" : "Click refresh →"}
+                        isRequired={isOllama}
+                        isLoading={modelsLoading}
+                        selectedKeys={model ? [model] : []}
+                        onSelectionChange={(keys) => {
+                          const selected = [...keys][0]
+                          if (selected) setModelValue(selected)
+                        }}
+                      >
+                        {availableModels.map((m) => (
+                          <SelectItem key={m} value={m}>
+                            {m}
+                          </SelectItem>
+                        ))}
+                      </Select>
+                      <Button
+                        isIconOnly
+                        size='sm'
+                        variant='flat'
+                        className='mt-1'
+                        isLoading={modelsLoading}
+                        onPress={() => fetchModels()}
+                        title="Refresh model list"
+                      >
+                        {!modelsLoading && <RefreshIcon />}
+                      </Button>
                     </div>
 
                     <div className='w-full md:w-1/5 flex'>
@@ -301,11 +477,6 @@ export function TranslatorApplication() {
                       </Switch>
                       <div className="flex flex-col place-content-center gap-1">
                         <p className="text-small">Use Structured Mode</p>
-                        {baseUrlValue && (
-                          <p className="text-tiny text-default-400">
-                            Base URL is set, disable structured mode for compatibility.
-                          </p>
-                        )}
                       </div>
                     </div>
 
@@ -359,7 +530,6 @@ export function TranslatorApplication() {
 
         <div className='w-full justify-between md:justify-center flex flex-wrap gap-1 sm:gap-4 mt-auto sticky top-0 backdrop-blur px-4 pt-4'>
           <FileUploadButton label={"Import SRT"} onFileSelect={async (file) => {
-            // console.log("File", file);
             try {
               const text = await file.text()
               const parsed = subtitleParser.fromSrt(text)
@@ -370,7 +540,7 @@ export function TranslatorApplication() {
             }
           }} />
           {!translatorRunningState && (
-            <Button type='submit' form="translator-config-form" color="primary" isDisabled={!APIvalue || translatorRunningState}>
+            <Button type='submit' form="translator-config-form" color="primary" isDisabled={!canStart()}>
               Start
             </Button>
           )}
@@ -382,7 +552,6 @@ export function TranslatorApplication() {
           )}
 
           <Button color="primary" onClick={() => {
-            // console.log(srtOutputText)
             downloadString(srtOutputText, "text/plain", "export.srt")
           }}>
             Export SRT
