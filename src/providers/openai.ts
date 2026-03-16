@@ -16,6 +16,8 @@ export class OpenAIProvider implements LLMProvider {
   readonly supportsStreaming = true;
   readonly supportsPromptCaching = true;
   readonly systemSuffix = '';
+  readonly prefixNumber = true;
+  readonly lineMatching = true;
 
   private client: OpenAI;
 

@@ -14,6 +14,10 @@ export interface LLMProvider {
   readonly supportsPromptCaching: boolean;
   /** Optional suffix appended to system instructions (e.g. '/no_think' for Qwen3) */
   readonly systemSuffix: string;
+  /** Whether this provider works well with numbered line prefixes (default: true) */
+  readonly prefixNumber: boolean;
+  /** Whether to enforce 1:1 line matching between input and output (default: true) */
+  readonly lineMatching: boolean;
 
   /** Returns an OpenAI-compatible client */
   getClient(): OpenAI;

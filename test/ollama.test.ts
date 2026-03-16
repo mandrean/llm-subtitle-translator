@@ -171,7 +171,9 @@ describe('Ollama integration (translategemma:12b)', { skip: !OLLAMA_ENABLED }, (
     assert.strictEqual(provider.supportsModeration, false);
     assert.strictEqual(provider.supportsStreaming, true);
     assert.strictEqual(provider.supportsPromptCaching, false);
-    assert.strictEqual(provider.systemSuffix, '');
+    assert.ok(provider.systemSuffix.length > 0, 'TranslateGemma should have a system suffix');
+    assert.strictEqual(provider.prefixNumber, false);
+    assert.strictEqual(provider.lineMatching, false);
   });
 
   test('model is listed in Ollama', async (t) => {

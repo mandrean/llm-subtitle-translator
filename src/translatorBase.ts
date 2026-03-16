@@ -87,9 +87,18 @@ export abstract class TranslatorBase<T = string, TLines extends T[] = T[]> {
       ...opts.createChatCompletionRequest,
     };
 
+    // Apply provider defaults for options not explicitly set by the caller
+    const providerDefaults: Partial<TranslatorOptions> = {};
+    if (opts.prefixNumber === undefined && services.provider.prefixNumber !== undefined) {
+      providerDefaults.prefixNumber = services.provider.prefixNumber;
+    }
+    if (opts.lineMatching === undefined && services.provider.lineMatching !== undefined) {
+      providerDefaults.lineMatching = services.provider.lineMatching;
+    }
+
     this.language = language;
     this.services = services;
-    this.options = { ...DefaultOptions, ...opts } as TranslatorOptions & {
+    this.options = { ...DefaultOptions, ...providerDefaults, ...opts } as TranslatorOptions & {
       createChatCompletionRequest: { model: string };
     };
     this.systemInstruction = `Translate ${this.language.from ? this.language.from + ' ' : ''}to ${this.language.to}`;
