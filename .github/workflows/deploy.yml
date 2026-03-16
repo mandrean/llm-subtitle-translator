@@ -22,7 +22,10 @@ jobs:
         with:
           node-version: '22'
 
-      - name: Build
+      - name: Build root package
+        run: npm ci && npm run build
+
+      - name: Build web
         run: cd web && npm ci && npm run build
 
       - name: Deploy
