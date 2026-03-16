@@ -67,6 +67,18 @@ cd web && npm install && npm run dev
 ```
 The web interface will be available at `http://localhost:3000/llm-subtitle-translator`.
 
+> **Ollama + Web UI:** Browsers block cross-origin requests by default. To use Ollama from the web interface (hosted or local dev), start Ollama with the appropriate origin allowed:
+> ```bash
+> # For the hosted web UI
+> OLLAMA_ORIGINS=https://mandrean.github.io ollama serve
+>
+> # For local development
+> OLLAMA_ORIGINS=http://localhost:3000 ollama serve
+>
+> # Or allow all origins
+> OLLAMA_ORIGINS=* ollama serve
+> ```
+
 ### Using Ollama (local models)
 
 [Ollama](https://ollama.com/) lets you run LLMs locally. The CLI supports Ollama out of the box.

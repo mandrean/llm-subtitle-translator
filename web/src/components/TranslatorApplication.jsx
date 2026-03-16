@@ -80,6 +80,7 @@ export function TranslatorApplication() {
   // Model list
   const [availableModels, setAvailableModels] = useState([])
   const [modelsLoading, setModelsLoading] = useState(false)
+  const [modelsError, setModelsError] = useState("")
 
   // Translator State
   const [srtInputText, setSrtInputText] = useState(sampleSrt)
@@ -175,6 +176,7 @@ export function TranslatorApplication() {
     const provider = overrideProvider ?? providerKey
     const ollamaUrl = overrideOllamaUrl !== undefined ? overrideOllamaUrl : ollamaBaseUrl
     setModelsLoading(true)
+    setModelsError("")
     try {
       let client
       if (provider === "openai") {
@@ -199,6 +201,14 @@ export function TranslatorApplication() {
       setAvailableModels(models)
     } catch (error) {
       console.error("[UI] Failed to fetch models:", error)
+      const msg = error?.message ?? String(error)
+      if (provider === "ollama" && (msg.includes("Connection error") || msg.includes("NetworkError") || msg.includes("Failed to fetch"))) {
+        setModelsError(
+          "CORS blocked. Start Ollama with: OLLAMA_ORIGINS=" + window.location.origin + " ollama serve"
+        )
+      } else {
+        setModelsError("Failed to fetch models: " + msg)
+      }
     } finally {
       setModelsLoading(false)
     }
@@ -435,37 +445,42 @@ export function TranslatorApplication() {
                   </div>
 
                   <div className='flex flex-wrap md:flex-nowrap w-full gap-4'>
-                    <div className='w-full md:w-1/5 flex gap-1 items-start'>
-                      <Select
-                        className='flex-1'
-                        size='sm'
-                        label="Model"
-                        placeholder={modelsLoading ? "Loading…" : "Click refresh →"}
-                        isRequired={isOllama}
-                        isLoading={modelsLoading}
-                        selectedKeys={model ? [model] : []}
-                        onSelectionChange={(keys) => {
-                          const selected = [...keys][0]
-                          if (selected) setModelValue(selected)
-                        }}
-                      >
-                        {availableModels.map((m) => (
-                          <SelectItem key={m} value={m}>
-                            {m}
-                          </SelectItem>
-                        ))}
-                      </Select>
-                      <Button
-                        isIconOnly
-                        size='sm'
-                        variant='flat'
-                        className='mt-1'
-                        isLoading={modelsLoading}
-                        onPress={() => fetchModels()}
-                        title="Refresh model list"
-                      >
-                        {!modelsLoading && <RefreshIcon />}
-                      </Button>
+                    <div className='w-full md:w-1/5 flex flex-col gap-1'>
+                      <div className='flex gap-1 items-start'>
+                        <Select
+                          className='flex-1'
+                          size='sm'
+                          label="Model"
+                          placeholder={modelsLoading ? "Loading…" : "Click refresh →"}
+                          isRequired={isOllama}
+                          isLoading={modelsLoading}
+                          selectedKeys={model ? [model] : []}
+                          onSelectionChange={(keys) => {
+                            const selected = [...keys][0]
+                            if (selected) setModelValue(selected)
+                          }}
+                        >
+                          {availableModels.map((m) => (
+                            <SelectItem key={m} value={m}>
+                              {m}
+                            </SelectItem>
+                          ))}
+                        </Select>
+                        <Button
+                          isIconOnly
+                          size='sm'
+                          variant='flat'
+                          className='mt-1'
+                          isLoading={modelsLoading}
+                          onPress={() => fetchModels()}
+                          title="Refresh model list"
+                        >
+                          {!modelsLoading && <RefreshIcon />}
+                        </Button>
+                      </div>
+                      {modelsError && (
+                        <p className="text-tiny text-danger">{modelsError}</p>
+                      )}
                     </div>
 
                     <div className='w-full md:w-1/5 flex'>
