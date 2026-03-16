@@ -8,7 +8,8 @@
     "build": "tsc",
     "typecheck": "tsc --noEmit",
     "test": "tsc && node --test dist/test/cooldown.test.js dist/test/subtitle.test.js",
-    "test:all": "tsc && node --test dist/test/*.test.js"
+    "test:all": "tsc && node --test dist/test/*.test.js",
+    "test:ollama": "tsc && OLLAMA_ENABLED=1 node --test dist/test/ollama.test.js"
   },
   "author": "Cerlancism",
   "license": "MIT",
