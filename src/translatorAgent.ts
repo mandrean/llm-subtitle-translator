@@ -11,6 +11,7 @@ import {
 import type { TimestampEntry, BatchTimestampOutput } from './translatorStructuredTimestamp.js';
 import type { TranslationServiceContext, TranslatorOptions } from './translatorBase.js';
 
+/** Zod schema for the scan-batch planning step output: a summary and recommended batch size. */
 const scanBatchSchema = z.object({
   batchSummary: z.string().describe('Translation notes for this scan window.'),
   batchSize: z
@@ -20,22 +21,26 @@ const scanBatchSchema = z.object({
     ),
 });
 
+/** Zod schema for consolidating multiple batch summaries into one condensed summary. */
 const consolidateSchema = z.object({
   consolidatedBatchSummary: z
     .string()
     .describe('Condensed synthesis of the provided batch summaries.'),
 });
 
+/** Zod schema for the refined final translation instruction. */
 const finalInstructionSchema = z.object({
   finalInstruction: z
     .string()
     .describe('Final translation system instruction for this subtitle file.'),
 });
 
+/** Zod schema for the content overview of a subtitle file. */
 const overviewSchema = z.object({
   overview: z.string().describe('Brief content overview of the subtitle file.'),
 });
 
+/** Zod schema for the agent's self-generated scanning and translation instruction. */
 const agentInstructionSchema = z.object({
   agentInstruction: z
     .string()
@@ -44,24 +49,57 @@ const agentInstructionSchema = z.object({
     ),
 });
 
+/** A contiguous range of entry indices for a translation batch. */
 export interface SliceRange {
+  /** Inclusive start index into the entries array. */
   start: number;
+  /** Inclusive end index into the entries array. */
   end: number;
 }
 
+/** Result of the agent's planning pass, containing the final instruction and batch slices. */
 export interface PlanningResult {
+  /** The consolidated and refined system instruction for the translation pass. */
   accumulatedBatchSummary: string;
+  /** Ordered, non-overlapping entry slices determined during the scanning pass. */
   customSlices: SliceRange[];
 }
 
+/**
+ * Computes the token budget for agent instructions as half of the full context budget.
+ *
+ * @param useFullContext - The total context token budget.
+ * @returns The token budget allocated for agent instructions.
+ */
 const agentInstructionTokenBudget = (useFullContext: number): number =>
   Math.floor(useFullContext / 2);
 
+/**
+ * Agentic two-pass subtitle translator that extends timestamp-aware translation
+ * with an intelligent planning phase.
+ *
+ * Pass 1 (Planning): Scans the entire subtitle file in windows, generates a
+ * content overview, builds an agent self-instruction, determines optimal batch
+ * boundaries at scene/topic breaks, and produces a refined system instruction.
+ *
+ * Pass 2 (Translation): Translates entries using the custom batch slices from
+ * planning, with the enriched system instruction and accumulated context.
+ */
 export class TranslatorAgent extends TranslatorStructuredTimestamp {
+  /** Context chunks built from completed translation batches for the agent's context window. */
   _agentContextChunks: { userContent: string; assistantContent: string; size: number }[];
+  /** Cumulative prompt tokens used across all planning-phase API calls. */
   planningPromptTokens: number;
+  /** Cumulative completion tokens used across all planning-phase API calls. */
   planningCompletionTokens: number;
 
+  /**
+   * Creates a new agentic translator.
+   *
+   * @param language - Source and target language configuration.
+   * @param services - Translation service context (client, cooler, stream callbacks, etc.).
+   * @param options - Optional translator configuration overrides.
+   */
   constructor(
     language: { from?: string; to: string },
     services: TranslationServiceContext,
@@ -73,11 +111,21 @@ export class TranslatorAgent extends TranslatorStructuredTimestamp {
     this.planningCompletionTokens = 0;
   }
 
+  /**
+   * Accumulates token usage from a planning-phase API call.
+   *
+   * @param completion - The chat completion response from a planning step.
+   */
   _accumulatePlanningUsage(completion: OpenAI.Chat.ChatCompletion) {
     this.planningPromptTokens += completion?.usage?.prompt_tokens ?? 0;
     this.planningCompletionTokens += completion?.usage?.completion_tokens ?? 0;
   }
 
+  /**
+   * Returns combined usage statistics including both translation and planning tokens.
+   *
+   * @returns Usage object with base translation metrics plus planning-specific token counts.
+   */
   override get usage() {
     const base = super.usage;
     return {
@@ -87,6 +135,7 @@ export class TranslatorAgent extends TranslatorStructuredTimestamp {
     };
   }
 
+  /** Prints translation usage and, if any planning tokens were consumed, planning token counts. */
   override async printUsage() {
     await super.printUsage();
     if (this.planningPromptTokens > 0 || this.planningCompletionTokens > 0) {
@@ -101,6 +150,12 @@ export class TranslatorAgent extends TranslatorStructuredTimestamp {
     }
   }
 
+  /**
+   * Records a completed translation batch as a context chunk for future batches.
+   *
+   * @param batch - The original input entries for the batch.
+   * @param outputEntries - The translated output entries for the batch.
+   */
   _recordContextChunk(batch: TimestampEntry[], outputEntries: TimestampEntry[]) {
     const userContent = encodeToon({ inputs: batch.map(toMsEntry) });
     const assistantContent = JSON.stringify({ outputs: outputEntries.map(toMsEntry) });
@@ -111,6 +166,13 @@ export class TranslatorAgent extends TranslatorStructuredTimestamp {
     });
   }
 
+  /**
+   * Builds conversation context from agent-recorded context chunks.
+   *
+   * Overrides the parent's history-based context with chunk-based context
+   * that preserves batch boundaries from the planning pass. Selects chunks
+   * that fit within the token budget and stores them in {@link promptContext}.
+   */
   override buildTimestampContext() {
     if (this._agentContextChunks.length === 0) return;
 
@@ -138,6 +200,15 @@ export class TranslatorAgent extends TranslatorStructuredTimestamp {
     );
   }
 
+  /**
+   * Translates entries one at a time, recording each result as a context chunk.
+   *
+   * Overrides the parent to additionally call {@link _recordContextChunk} so
+   * that single-entry fallback results are available for agent context building.
+   *
+   * @param entries - Array of timestamp entries to translate individually.
+   * @yields Each translated timestamp entry.
+   */
   override async *translateSingleSrt(entries: TimestampEntry[]) {
     log.debug('[TranslatorAgent]', 'Single entry mode');
     for (const entry of entries) {
@@ -165,6 +236,14 @@ export class TranslatorAgent extends TranslatorStructuredTimestamp {
     }
   }
 
+  /**
+   * Runs Pass 0: generates a content overview and agent self-instruction
+   * by sampling the first and last entries of the subtitle file.
+   *
+   * @param entries - All subtitle entries in the file.
+   * @param subtitleMeta - Metadata string (file name, entry count, duration).
+   * @returns The overview and agent instruction, or `null` if the overview step fails.
+   */
   async _runOverviewPass(
     entries: TimestampEntry[],
     subtitleMeta: string,
@@ -192,6 +271,18 @@ export class TranslatorAgent extends TranslatorStructuredTimestamp {
     return { overview, agentInstruction };
   }
 
+  /**
+   * Generates a brief content overview of the subtitle file from sampled entries.
+   *
+   * Prompts the model to analyze subtitle metadata and head/tail samples to
+   * identify genre, setting, tone, character names, and linguistic features.
+   *
+   * @param head - The first N entries of the subtitle file.
+   * @param tail - The last N entries (empty if the file is small enough to sample entirely).
+   * @param sampleLabel - Human-readable description of which entries were sampled.
+   * @param subtitleMeta - Metadata string (file name, entry count, duration).
+   * @returns The overview text, or `null` if the step fails or is refused.
+   */
   async _generateOverview(
     head: TimestampEntry[],
     tail: TimestampEntry[],
@@ -249,6 +340,16 @@ export class TranslatorAgent extends TranslatorStructuredTimestamp {
     }
   }
 
+  /**
+   * Generates an enhanced self-instruction for scanning and translating the file
+   * based on the content overview.
+   *
+   * The instruction guides the agent on what to watch for: scene boundaries,
+   * speaker changes, terminology consistency, and tone/register shifts.
+   *
+   * @param overview - The content overview from {@link _generateOverview}.
+   * @returns The agent instruction text, or `null` if the step fails.
+   */
   async _generateAgentInstruction(overview: string): Promise<string | null> {
     const messages: OpenAI.Chat.ChatCompletionMessageParam[] = [
       {
@@ -298,6 +399,20 @@ export class TranslatorAgent extends TranslatorStructuredTimestamp {
     }
   }
 
+  /**
+   * Runs Pass 1 (Planning): scans all entries in windows to determine optimal
+   * batch boundaries and build a refined system instruction.
+   *
+   * For each scan window, collects a batch summary and a recommended batch size.
+   * Summaries are periodically consolidated to stay within the token budget.
+   * At the end, produces a final refined instruction combining the base instruction,
+   * consolidated context, and subtitle metadata.
+   *
+   * @param entries - All subtitle entries in the file.
+   * @param overviewResult - Optional overview and agent instruction from Pass 0.
+   * @param subtitleMeta - Optional metadata string (file name, entry count, duration).
+   * @returns The final instruction and an ordered array of batch slices for Pass 2.
+   */
   async runPlanningPass(
     entries: TimestampEntry[],
     overviewResult?: { overview: string; agentInstruction: string } | null,
@@ -507,6 +622,17 @@ export class TranslatorAgent extends TranslatorStructuredTimestamp {
     return { accumulatedBatchSummary: finalInstruction, customSlices };
   }
 
+  /**
+   * Normalizes raw planning slices into a contiguous, non-overlapping sequence
+   * covering all entries from index 0 to `totalEntries - 1`.
+   *
+   * Sorts slices by start index, merges overlapping ranges, fills gaps with
+   * filler slices, and extends the first/last slice to cover the full entry range.
+   *
+   * @param slices - Raw slice ranges from the scanning pass (may overlap or have gaps).
+   * @param totalEntries - Total number of entries in the subtitle file.
+   * @returns Normalized, contiguous slice ranges covering all entries.
+   */
   _normalizeSlices(slices: SliceRange[], totalEntries: number): SliceRange[] {
     if (slices.length === 0) return [];
 
@@ -562,6 +688,19 @@ export class TranslatorAgent extends TranslatorStructuredTimestamp {
     return merged;
   }
 
+  /**
+   * Scans a single window of entries during the planning pass.
+   *
+   * Prompts the model to analyze the entries and produce a batch summary
+   * (covering who/what/where/when/why/how) and a recommended batch size
+   * for translation. The batch size is clamped to `[1, batch.length]`.
+   *
+   * @param batch - The entries in this scan window.
+   * @param batchStart - The starting index of this window in the full entry list.
+   * @param accumulatedBatchSummary - Context from previously scanned windows.
+   * @param agentInstruction - Optional agent self-instruction from the overview pass.
+   * @returns The batch summary and recommended size, or `null` on refusal/empty response.
+   */
   async _runScanBatch(
     batch: TimestampEntry[],
     batchStart: number,
@@ -635,6 +774,19 @@ export class TranslatorAgent extends TranslatorStructuredTimestamp {
     return parsed;
   }
 
+  /**
+   * Consolidates accumulated batch summaries to fit within a token budget.
+   *
+   * Prompts the model to merge existing summaries (and optionally a new note)
+   * into a condensed set of notes. If consolidation fails, falls back to
+   * truncating the oldest lines until the budget is met.
+   *
+   * @param existing - The accumulated batch summaries so far.
+   * @param newNote - An optional new batch summary to incorporate.
+   * @param budget - The maximum token budget for the consolidated result.
+   * @param budgetFactor - Fraction of the budget to target (default: 0.5).
+   * @returns The consolidated summary text.
+   */
   async _consolidateBatchSummaries(
     existing: string,
     newNote: string = '',
@@ -698,6 +850,17 @@ export class TranslatorAgent extends TranslatorStructuredTimestamp {
     return newNote;
   }
 
+  /**
+   * Refines the base system instruction using observed content context.
+   *
+   * Produces a lean, focused translation instruction by filtering glossary
+   * entries to only those encountered in the file, removing redundant or
+   * out-of-scope directives, and preserving relevant stylistic guidance.
+   *
+   * @param contextSummary - The consolidated context summary from planning.
+   * @param budget - The maximum token budget for the refined instruction.
+   * @returns The refined instruction text, or `null` if refinement fails.
+   */
   async _refineFinalInstruction(
     contextSummary: string,
     budget: number,
@@ -748,6 +911,21 @@ export class TranslatorAgent extends TranslatorStructuredTimestamp {
     return null;
   }
 
+  /**
+   * Main entry point: runs the full agentic two-pass translation pipeline.
+   *
+   * Pass 0 (Overview): Samples head/tail entries to generate a content overview
+   * and agent self-instruction.
+   *
+   * Pass 1 (Planning): Scans all entries to build batch summaries, determine
+   * optimal slice boundaries, and produce a refined system instruction.
+   *
+   * Pass 2 (Translation): Translates entries using the custom slices from
+   * planning, falling back to standard translation if no slices were produced.
+   *
+   * @param entries - All subtitle entries to translate.
+   * @yields Each translated timestamp entry as it becomes available.
+   */
   override async *translateSrtLines(entries: TimestampEntry[]) {
     log.debug(
       '[TranslatorAgent]',
@@ -801,6 +979,19 @@ export class TranslatorAgent extends TranslatorStructuredTimestamp {
     yield* this._translateWithCustomSlices(entries, customSlices);
   }
 
+  /**
+   * Pass 2 implementation: translates entries using pre-determined custom slices.
+   *
+   * For each slice, attempts a batch translation and validates temporal boundaries.
+   * On mismatch, re-splits the slice into smaller sub-slices using the next
+   * available batch size. Falls back to single-entry translation when no
+   * smaller batch size is available. Records context chunks for each successful
+   * batch.
+   *
+   * @param entries - All subtitle entries in the file.
+   * @param customSlices - Ordered batch slices from the planning pass (mutated in-place on re-splits).
+   * @yields Each translated timestamp entry as it becomes available.
+   */
   async *_translateWithCustomSlices(
     entries: TimestampEntry[],
     customSlices: SliceRange[],

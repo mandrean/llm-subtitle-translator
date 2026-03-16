@@ -11,6 +11,7 @@ import type { TranslationServiceContext, TranslatorOptions } from './translatorB
 import { timestampToMilliseconds, millisecondsToTimestamp } from './subtitle.js';
 import { encode as encodeToon } from '@toon-format/toon';
 
+/** Zod schema for an array of subtitle entries with integer millisecond timestamps. */
 const timestampEntriesSchema = z.array(
   z.object({
     start: z.int(),
@@ -19,35 +20,55 @@ const timestampEntriesSchema = z.array(
   }),
 );
 
+/** A subtitle entry with human-readable timestamp strings (e.g., "00:01:23,456"). */
 export interface TimestampEntry {
+  /** Start timestamp in SRT format (HH:MM:SS,mmm). */
   start: string;
+  /** End timestamp in SRT format (HH:MM:SS,mmm). */
   end: string;
+  /** The subtitle text content. */
   text: string;
 }
 
+/** A subtitle entry with integer millisecond timestamps, as inferred from the Zod schema. */
 export type MsEntry = z.infer<typeof timestampEntriesSchema>[number];
 
+/**
+ * Converts a human-readable timestamp entry to a millisecond-based entry.
+ *
+ * @param e - A timestamp entry with string-formatted timestamps.
+ * @returns The same entry with timestamps converted to integer milliseconds.
+ */
 export const toMsEntry = (e: TimestampEntry): MsEntry => ({
   start: timestampToMilliseconds(e.start),
   end: timestampToMilliseconds(e.end),
   text: e.text,
 });
 
+/**
+ * Converts a millisecond-based entry back to a human-readable timestamp entry.
+ *
+ * @param e - A millisecond-based subtitle entry.
+ * @returns The same entry with timestamps formatted as SRT strings.
+ */
 const fromMsEntry = (e: MsEntry): TimestampEntry => ({
   start: millisecondsToTimestamp(e.start),
   end: millisecondsToTimestamp(e.end),
   text: e.text,
 });
 
+/** Zod schema for single-entry translation output (no merge remarks). */
 const singleTimestampSchema = z.object({
   outputs: timestampEntriesSchema,
 });
 
+/** Zod schema for batch translation output including optional merge remarks. */
 const batchTimestampSchema = z.object({
   outputs: timestampEntriesSchema,
   remarksIfContainedMergers: z.string(),
 });
 
+/** Human-readable schema field descriptions appended to the system instruction. */
 const schemaDescriptions = {
   single: ['outputs: Subtitle entries with start and end as milliseconds'].join('\n'),
   batch: [
@@ -56,21 +77,49 @@ const schemaDescriptions = {
   ].join('\n'),
 };
 
+/** Parsed batch translation result with human-readable timestamps and merge remarks. */
 export interface BatchTimestampOutput {
+  /** The translated subtitle entries. */
   outputs: TimestampEntry[];
+  /** Explanation of any entry merges, or empty string if none occurred. */
   remarksIfContainedMergers: string;
 }
 
+/** A record of a single entry's translation for context-building purposes. */
 interface EntryHistoryItem {
+  /** The original source entry. */
   input: TimestampEntry;
+  /** The translated output entry. */
   output: TimestampEntry;
+  /** Number of completion tokens used for this entry's translation. */
   completionTokens: number;
 }
 
+/**
+ * Structured translator for timestamp-aware subtitle entries.
+ *
+ * Translates subtitle entries that carry start/end timestamps, preserving
+ * temporal boundaries. Supports both single-entry and batch modes, with
+ * automatic fallback from batch to single-entry translation when timestamp
+ * boundary mismatches are detected. Maintains a full translation history
+ * for context-aware subsequent batches.
+ */
 export class TranslatorStructuredTimestamp extends TranslatorStructuredBase<TimestampEntry> {
+  /** History of all translated entries, used to build context for subsequent batches. */
   entryHistory: EntryHistoryItem[];
+  /** The batch of entries currently being translated (used by the stream parser). */
   currentBatchEntries?: TimestampEntry[];
 
+  /**
+   * Creates a new timestamp-aware structured translator.
+   *
+   * Forces `lineMatching` to `false` since timestamp mode handles its own
+   * output alignment via temporal boundaries.
+   *
+   * @param language - Source and target language configuration.
+   * @param services - Translation service context (client, cooler, stream callbacks, etc.).
+   * @param options - Optional translator configuration overrides.
+   */
   constructor(
     language: { from?: string; to: string },
     services: TranslationServiceContext,
@@ -89,6 +138,17 @@ export class TranslatorStructuredTimestamp extends TranslatorStructuredBase<Time
     this.entryHistory = [];
   }
 
+  /**
+   * Translates a batch of timestamp entries using the appropriate schema
+   * (single vs. batch) and TOON-encoded input format.
+   *
+   * Single entries use a simpler schema without merge remarks. Batch entries
+   * include a `remarksIfContainedMergers` field to detect and explain any
+   * entry merging performed by the model.
+   *
+   * @param entries - Array of timestamp entries to translate.
+   * @returns The translation output with parsed timestamp entries and usage metadata.
+   */
   async doTranslatePrompt(entries: TimestampEntry[]): Promise<TranslationOutput> {
     const isSingle = entries.length === 1;
     const schema = isSingle ? singleTimestampSchema : batchTimestampSchema;
@@ -143,6 +203,14 @@ export class TranslatorStructuredTimestamp extends TranslatorStructuredBase<Time
     }
   }
 
+  /**
+   * Builds conversation context from the translation history for subsequent batches.
+   *
+   * Groups history entries into chunks matching the largest configured batch size,
+   * deduplicates by start timestamp, encodes as TOON/JSON pairs, and selects
+   * chunks that fit within the token budget via {@link selectContextChunks}.
+   * The resulting context is stored in {@link promptContext}.
+   */
   buildTimestampContext() {
     if (this.entryHistory.length === 0) return;
 
@@ -186,6 +254,17 @@ export class TranslatorStructuredTimestamp extends TranslatorStructuredBase<Time
     ]);
   }
 
+  /**
+   * Translates entries one at a time as a fallback when batch translation fails.
+   *
+   * Each entry is translated individually with fresh context built from the
+   * full history. Results are recorded in {@link entryHistory} and yielded
+   * as they complete. Falls back to the original entry if the model returns
+   * an empty output.
+   *
+   * @param entries - Array of timestamp entries to translate individually.
+   * @yields Each translated timestamp entry.
+   */
   async *translateSingleSrt(entries: TimestampEntry[]) {
     log.debug('[TranslatorStructuredTimestamp]', 'Single entry mode');
     for (const entry of entries) {
@@ -212,6 +291,18 @@ export class TranslatorStructuredTimestamp extends TranslatorStructuredBase<Time
     }
   }
 
+  /**
+   * Validates that a batch translation output preserves temporal boundaries.
+   *
+   * Checks that the first output starts at the same time as the first input
+   * and the last output ends at the same time as the last input. Also logs
+   * merge status information via {@link logMergeStatus}.
+   *
+   * @param batch - The original input entries for this batch.
+   * @param outputEntries - The translated output entries returned by the model.
+   * @param remarksIfContainedMergers - The model's explanation of any merges.
+   * @returns `true` if a timestamp boundary mismatch was detected, `false` if boundaries are valid.
+   */
   evaluateBatchOutput(
     batch: TimestampEntry[],
     outputEntries: TimestampEntry[],
@@ -258,6 +349,20 @@ export class TranslatorStructuredTimestamp extends TranslatorStructuredBase<Time
     return isMismatch;
   }
 
+  /**
+   * Logs diagnostic information about entry merging in a batch output.
+   *
+   * Warns when the model's merge declaration disagrees with the actual
+   * output count, and logs detailed input/output comparisons when genuine
+   * merges are detected.
+   *
+   * @param batch - The original input entries.
+   * @param outputEntries - The translated output entries.
+   * @param remarksIfContainedMergers - The model's merge explanation.
+   * @param isMismatch - Whether a timestamp boundary mismatch was detected.
+   * @param actuallyMerged - Whether the output count differs from the input count.
+   * @param lastInputEnd - The end timestamp of the last input entry.
+   */
   logMergeStatus(
     batch: TimestampEntry[],
     outputEntries: TimestampEntry[],
@@ -305,6 +410,17 @@ export class TranslatorStructuredTimestamp extends TranslatorStructuredBase<Time
     }
   }
 
+  /**
+   * Main translation loop for SRT subtitle entries with adaptive batch sizing.
+   *
+   * Iterates through entries in batches, validates temporal boundaries on each
+   * batch output, and automatically reduces batch size on mismatches or refusals.
+   * Falls back to single-entry translation when the minimum batch size still fails.
+   * Gradually increases batch size again after a threshold of consecutive successes.
+   *
+   * @param entries - All subtitle entries to translate.
+   * @yields Each translated timestamp entry as it becomes available.
+   */
   async *translateSrtLines(entries: TimestampEntry[]) {
     log.debug(
       '[TranslatorStructuredTimestamp]',
@@ -380,6 +496,17 @@ export class TranslatorStructuredTimestamp extends TranslatorStructuredBase<Time
     }
   }
 
+  /**
+   * Incrementally parses the streamed JSON response to emit subtitle fields
+   * (start, end, text) as they arrive.
+   *
+   * Uses a JSONParser targeting `$.outputs.*.start`, `$.outputs.*.end`, and
+   * `$.outputs.*.text` with partial token/value emission enabled. Converts
+   * millisecond timestamps back to human-readable format on the fly and
+   * marks unexpected timestamp shifts with a `>>>` prefix.
+   *
+   * @param runner - The OpenAI streaming runner instance.
+   */
   override jsonStreamParse(runner: any): void {
     const passThroughStream = new PassThrough();
 

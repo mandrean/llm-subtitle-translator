@@ -28,6 +28,14 @@ import type { TranslationServiceContext, TranslatorOptions, LLMProvider } from '
 
 import 'dotenv/config';
 
+/**
+ * Detects HTTP/HTTPS proxy configuration from environment variables and
+ * returns an undici proxy agent if a proxy is configured.
+ *
+ * Checks `http_proxy` / `HTTP_PROXY` and `https_proxy` / `HTTPS_PROXY`.
+ *
+ * @returns An {@link undici.EnvHttpProxyAgent} if proxy env vars are set, otherwise `undefined`.
+ */
 function getProxyAgent(): undici.EnvHttpProxyAgent | undefined {
   const httpProxyConfig = process.env.http_proxy ?? process.env.HTTP_PROXY;
   const httpsProxyConfig = process.env.https_proxy ?? process.env.HTTPS_PROXY;
@@ -43,6 +51,18 @@ function getProxyAgent(): undici.EnvHttpProxyAgent | undefined {
   return undefined;
 }
 
+/**
+ * Factory that instantiates the appropriate {@link LLMProvider} based on the
+ * given provider name. Reads API keys and base URLs from environment variables.
+ *
+ * Supported providers: `"openai"`, `"ollama"`, `"ollama-qwen3"`,
+ * `"ollama-translategemma-12b"`, `"ollama-translategemma-4b"`.
+ *
+ * @param providerName - Identifier for the LLM provider to create.
+ * @param model - Optional model override. Required when `providerName` is `"ollama"`.
+ * @returns A configured {@link LLMProvider} instance.
+ * @throws {Error} If `providerName` is unknown or if `"ollama"` is selected without a model.
+ */
 function createProvider(providerName: string, model?: string): LLMProvider {
   const proxyAgent = getProxyAgent();
 
@@ -74,6 +94,15 @@ function createProvider(providerName: string, model?: string): LLMProvider {
   }
 }
 
+/**
+ * Parses CLI arguments via Commander and builds a partial {@link TranslatorOptions}
+ * configuration object. Handles log-level setup, option validation, and
+ * environment variable defaults.
+ *
+ * @param args - The raw CLI argument array (typically `process.argv`).
+ * @returns An object containing the parsed Commander `opts` and the derived
+ *          `options` ready to be passed to a translator constructor.
+ */
 export function createInstance(args: readonly string[]) {
   const program = new Command()
     .description('Translation tool based on LLM APIs')
@@ -221,6 +250,13 @@ export function createInstance(args: readonly string[]) {
   return { opts, options };
 }
 
+/**
+ * Main execution block. Runs only when the script is invoked directly (not imported).
+ *
+ * Parses CLI arguments, creates the LLM provider, sets up rate-limiting cooldown
+ * contexts, selects the appropriate translator variant based on structured mode,
+ * and orchestrates SRT / plain-text translation with progress file support.
+ */
 if (import.meta.url === url.pathToFileURL(process.argv[1]).href) {
   const { opts, options } = createInstance(process.argv);
 
@@ -280,6 +316,12 @@ if (import.meta.url === url.pathToFileURL(process.argv[1]).href) {
     }),
   };
 
+  /**
+   * Selects and instantiates the translator variant matching the configured
+   * structured response mode (`array`, `timestamp`, `agent`, `object`, or plain).
+   *
+   * @returns A translator instance appropriate for the chosen mode.
+   */
   function getTranslator() {
     if (options.structuredMode == 'array') {
       return new TranslatorStructuredArray(
@@ -439,6 +481,14 @@ if (import.meta.url === url.pathToFileURL(process.argv[1]).href) {
   }
 }
 
+/**
+ * Translates plain text line-by-line using the provided translator, optionally
+ * appending each translated line to an output file.
+ *
+ * @param translator - The {@link Translator} instance to use.
+ * @param text - The full input text (lines separated by newlines).
+ * @param outfile - Optional file path to append translated output to.
+ */
 async function translatePlainText(
   translator: Translator,
   text: string,
@@ -463,6 +513,15 @@ async function translatePlainText(
   }
 }
 
+/**
+ * Reads a CSV progress file produced by a previous translation run and
+ * returns the translated strings in order. Used for resuming interrupted
+ * translations.
+ *
+ * @param progressFile - Path to the progress CSV file.
+ * @returns An ordered array of previously translated strings.
+ * @throws If the CSV indices are not sequential (file corruption).
+ */
 async function getProgress(progressFile: string): Promise<string[]> {
   const content = await fs.promises.readFile(progressFile, 'utf-8');
   const lines = content.split(/\r?\n/);
@@ -486,6 +545,12 @@ async function getProgress(progressFile: string): Promise<string[]> {
   return progress;
 }
 
+/**
+ * Checks whether a file exists at the given path.
+ *
+ * @param filePath - The path to check.
+ * @returns `true` if the file exists and is accessible, `false` otherwise.
+ */
 async function checkFileExists(filePath: fs.PathLike): Promise<boolean> {
   try {
     await fs.promises.access(filePath);

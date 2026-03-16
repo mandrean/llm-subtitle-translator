@@ -11,21 +11,54 @@ import { TranslationOutput } from './translatorOutput.js';
 export { DefaultOptions };
 export type { TranslationServiceContext, TranslatorOptions };
 
+/**
+ * Internal record tracking a single translated line alongside its
+ * original source text and the completion tokens it consumed.
+ */
 interface WorkingEntry {
+  /** The (possibly preprocessed) source line sent to the model. */
   source: string;
+  /** The raw translated text returned by the model. */
   transform: string;
+  /** Estimated completion tokens used to produce this entry. */
   completionTokens?: number;
 }
 
+/**
+ * Concrete translator that sends subtitle lines to an LLM for translation.
+ *
+ * Handles batching, line-count validation, number-prefix alignment,
+ * streaming, moderation, and adaptive batch-size management. Extends
+ * {@link TranslatorBase} with the prompt-construction and output-parsing logic.
+ *
+ * @typeParam T      - Element type of a single translation unit (default `string`).
+ * @typeParam TLines - Array type passed to translation methods (default `T[]`).
+ */
 export class Translator<T = string, TLines extends T[] = T[]> extends TranslatorBase<T, TLines> {
+  /** Completed translations accumulated so far (used to build context). */
   workingProgress: WorkingEntry[];
+  /** Starting index within the full line array for the current run. */
   offset: number;
+  /** Optional exclusive end index; defaults to the full line array length. */
   end: number | undefined;
+  /** Map of line indices flagged by moderation or label-mismatch checks. */
   moderatorFlags: Map<number, any>;
+  /** The full set of raw input lines being translated in the current run. */
   workingLines: string[];
 
+  /** Tag delimiters used to detect and strip "thinking" blocks from model output. */
   thinkTags: { start: string; end: string };
 
+  /**
+   * Creates a new Translator instance.
+   *
+   * Initialises working state (progress, flags, offset) and delegates
+   * option merging and client setup to the base class constructor.
+   *
+   * @param language - Source (optional) and target language.
+   * @param services - External service dependencies (provider, cooldown, etc.).
+   * @param options  - Partial overrides for the default translator options.
+   */
   constructor(
     language: { from?: string; to: string },
     services: TranslationServiceContext,
@@ -43,6 +76,17 @@ export class Translator<T = string, TLines extends T[] = T[]> extends Translator
     };
   }
 
+  /**
+   * Parses the raw model response into an array of translated lines.
+   *
+   * Strips any leading `<think>...</think>` block emitted by reasoning models,
+   * then splits on newlines. For single-line inputs the output is collapsed
+   * into one string to avoid spurious line breaks.
+   *
+   * @param inputLines  - The original input batch (used to detect single-line mode).
+   * @param rawContent  - The raw text content returned by the model.
+   * @returns An array of translated line strings.
+   */
   getOutput(inputLines: any[], rawContent: string): string[] {
     rawContent = rawContent.trim();
     if (rawContent.startsWith(this.thinkTags.start)) {
@@ -63,6 +107,17 @@ export class Translator<T = string, TLines extends T[] = T[]> extends Translator
     }
   }
 
+  /**
+   * Constructs the chat prompt and calls the LLM, returning translated content.
+   *
+   * Assembles system instruction, initial prompts, accumulated context, and
+   * the user message, then delegates to the OpenAI-compatible client. Supports
+   * both streaming and non-streaming modes. The retry wrapper handles transient
+   * API errors up to three attempts.
+   *
+   * @param lines - The batch of lines to translate.
+   * @returns Translation output with content and token usage.
+   */
   async doTranslatePrompt(lines: TLines): Promise<TranslationOutput> {
     const text = (lines as unknown as string[]).join('\n\n');
     const userMessage: OpenAI.Chat.ChatCompletionMessageParam = {
@@ -129,6 +184,15 @@ export class Translator<T = string, TLines extends T[] = T[]> extends Translator
     ))!;
   }
 
+  /**
+   * Falls back to translating one line at a time when batch translation fails.
+   *
+   * Trims the batch to the current batch size, then processes each line
+   * individually so that line-count mismatches cannot occur.
+   *
+   * @param batch - The batch of preprocessed lines to translate individually.
+   * @yields Per-line translation results via {@link yieldOutput}.
+   */
   async *translateSingle(batch: string[]) {
     log.debug(`[Translator]`, 'Single line mode');
     batch = batch.slice(-this.currentBatchSize);
@@ -141,6 +205,18 @@ export class Translator<T = string, TLines extends T[] = T[]> extends Translator
     }
   }
 
+  /**
+   * Main translation loop that processes all input lines in adaptive batches.
+   *
+   * For each batch: preprocesses lines, optionally runs moderation, calls the
+   * model, validates output line count, and yields results. On line-count
+   * mismatch or refusal the batch size is decreased; after enough successful
+   * batches it is increased again. The loop exits early if {@link abort} is
+   * called.
+   *
+   * @param lines - The full array of raw subtitle lines to translate.
+   * @yields Per-line translation results including source, transform, and final text.
+   */
   async *translateLines(lines: string[]) {
     log.debug('[Translator]', 'System Instruction:', this.systemInstruction);
     this.aborted = false;
@@ -225,6 +301,18 @@ export class Translator<T = string, TLines extends T[] = T[]> extends Translator
     }
   }
 
+  /**
+   * Yields post-processed translation results for a successfully translated batch.
+   *
+   * For each line, applies number-prefix stripping and newline restoration,
+   * checks for moderator flags and label mismatches, records the entry in
+   * {@link workingProgress}, and yields the final output object.
+   *
+   * @param promptSources             - The preprocessed source lines sent to the model.
+   * @param promptTransforms          - The raw translated lines from the model.
+   * @param completionTokensPerEntry  - Estimated completion tokens per line.
+   * @yields Objects containing the 1-based index, original source, cleaned transform, and final transform.
+   */
   *yieldOutput(
     promptSources: string[],
     promptTransforms: string[],
@@ -271,6 +359,17 @@ export class Translator<T = string, TLines extends T[] = T[]> extends Translator
     }
   }
 
+  /**
+   * Prepares a single line before sending it to the model.
+   *
+   * Replaces literal newlines with the `\\N` escape sequence and optionally
+   * prefixes the line with a 1-based number label for alignment verification.
+   *
+   * @param line   - The raw subtitle line.
+   * @param index  - Zero-based index within the current batch.
+   * @param offset - Zero-based starting index of the batch within the full line array.
+   * @returns The preprocessed line string.
+   */
   preprocessLine(line: string, index: number, offset: number): string {
     line = line.replaceAll('\n', ' \\N ');
     if (this.options.prefixNumber) {
@@ -279,18 +378,41 @@ export class Translator<T = string, TLines extends T[] = T[]> extends Translator
     return line;
   }
 
+  /**
+   * Strips the number prefix from a translated line and applies standard post-processing.
+   *
+   * Uses {@link splitStringByNumberLabel} to separate the numeric label from
+   * the text, then delegates to {@link postprocessLine} for escape restoration.
+   *
+   * @param line - A translated line expected to start with a number label (e.g. `"1. text"`).
+   * @returns An object with the parsed `number` and the cleaned `text`.
+   */
   postprocessNumberPrefixedLine(line: string) {
     const splits = splitStringByNumberLabel(line.trim());
     splits.text = this.postprocessLine(splits.text);
     return splits;
   }
 
+  /**
+   * Restores literal newlines from the `\\N` escape sequence used during preprocessing.
+   *
+   * @param line - A translated line potentially containing `\\N` escapes.
+   * @returns The line with `\\N` sequences replaced by actual newline characters.
+   */
   postprocessLine(line: string): string {
     line = line.replaceAll(' \\N ', '\n');
     line = line.replaceAll('\\N', '\n');
     return line;
   }
 
+  /**
+   * Rebuilds the {@link promptContext} from accumulated working progress.
+   *
+   * Splits progress entries into batch-sized chunks, uses
+   * {@link selectContextChunks} to fit them within the token budget, replaces
+   * flagged entries with placeholders, and stores the resulting messages in
+   * {@link promptContext} for the next translation call.
+   */
   buildContext() {
     if (this.workingProgress.length === 0) {
       return;
@@ -336,6 +458,17 @@ export class Translator<T = string, TLines extends T[] = T[]> extends Translator
     this.promptContext = this.getContext(checkedSource, checkedTransform);
   }
 
+  /**
+   * Converts parallel arrays of source and translated lines into chat messages
+   * suitable for few-shot context.
+   *
+   * Lines are grouped into batch-sized chunks, with each chunk producing one
+   * user message (source) and one assistant message (translation).
+   *
+   * @param sourceLines    - The preprocessed source lines.
+   * @param transformLines - The corresponding translated lines.
+   * @returns An array of alternating user/assistant chat messages.
+   */
   getContext(
     sourceLines: string[],
     transformLines: string[],
@@ -357,6 +490,16 @@ export class Translator<T = string, TLines extends T[] = T[]> extends Translator
     return chunks;
   }
 
+  /**
+   * Joins an array of lines into a single string for use as message content.
+   *
+   * Lines are separated by double newlines to match the prompt format
+   * expected by the model.
+   *
+   * @param lines - The lines to join.
+   * @param _role - The chat role (unused in this base implementation but available for overrides).
+   * @returns A single string with lines separated by blank lines.
+   */
   getContextLines(lines: string[], _role: 'user' | 'assistant'): string {
     return lines.join('\n\n');
   }

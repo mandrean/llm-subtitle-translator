@@ -3,12 +3,34 @@ import type { Stream } from 'openai/streaming';
 import log from 'loglevel';
 import { retryWrapper, sleep } from './helpers.js';
 
+/**
+ * A specialized {@link SyntaxError} thrown when a chat completion stream
+ * emits data that cannot be parsed (e.g. malformed JSON chunks).
+ */
 export class ChatStreamSyntaxError extends SyntaxError {
+  /**
+   * @param message - Descriptive error message.
+   * @param cause - Optional underlying error that triggered this one.
+   */
   constructor(message: string, cause?: ErrorOptions) {
     super(message, cause);
   }
 }
 
+/**
+ * Wraps an async function with retry logic tailored to OpenAI API errors.
+ *
+ * Handles rate-limit (429) and server (5xx) errors with exponential back-off,
+ * retries {@link ChatStreamSyntaxError}s with quadratic delay, and throws
+ * immediately on all other errors.
+ *
+ * @typeParam T - The resolved type of the async function.
+ * @param func - The async function to execute (typically an OpenAI API call).
+ * @param maxRetries - Maximum number of retry attempts.
+ * @param description - Label included in log and error messages.
+ * @returns The result of {@link func}, or `undefined` if retries are exhausted without throwing.
+ * @throws Re-throws non-retryable errors or a max-retries-reached error string.
+ */
 export async function openaiRetryWrapper<T>(
   func: () => Promise<T>,
   maxRetries: number,
@@ -62,6 +84,16 @@ export async function openaiRetryWrapper<T>(
   );
 }
 
+/**
+ * Consumes an OpenAI streaming chat completion response and concatenates the
+ * text content into a single string.
+ *
+ * @param response - The streaming response to consume.
+ * @param onData - Optional callback invoked with each text chunk as it arrives.
+ * @param onEnd - Optional callback invoked with the usage statistics once the stream ends.
+ * @returns The full concatenated completion text.
+ * @throws {ChatStreamSyntaxError} If the stream emits unparseable data.
+ */
 export async function completeChatStream(
   response: Stream<OpenAI.Chat.Completions.ChatCompletionChunk>,
   onData: (d: string) => void = () => {},

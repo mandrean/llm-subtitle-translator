@@ -5,6 +5,13 @@ import { Command } from 'commander';
 import path from 'node:path';
 import { offsetSrt, parseTimeOffset, parser } from '../src/subtitle.js';
 
+/**
+ * Parses CLI arguments for the subtitle utility and registers the `offset`
+ * and `merge` subcommands via Commander.
+ *
+ * @param args - The raw CLI argument array (typically `process.argv`).
+ * @returns An object containing the Commander `program` instance and parsed `opts`.
+ */
 export function createInstance(args: readonly string[]) {
   const commandOffsetFile = new Command('offset')
     .description(
@@ -34,6 +41,16 @@ export function createInstance(args: readonly string[]) {
   return { program, opts };
 }
 
+/**
+ * Offsets all timestamps in an SRT file by the given amount. The original file
+ * is renamed with an `.old` suffix before writing the adjusted output.
+ *
+ * Accepts offset strings in `HH-MM-SS.sss`, `HH:MM:SS,sss`, `HH:MM:SS.sss`,
+ * or raw seconds formats. Negative offsets are supported.
+ *
+ * @param file - Path to the SRT file to offset.
+ * @param offset - Time offset string (see {@link parseTimeOffset} for accepted formats).
+ */
 export function offsetFile(file: string, offset: string) {
   const offsetSeconds = parseTimeOffset(offset);
 
@@ -53,6 +70,14 @@ export function offsetFile(file: string, offset: string) {
   fs.writeFileSync(file, srt);
 }
 
+/**
+ * Merges multiple SRT subtitle files into a single file. Entries are
+ * concatenated in the order the files are provided, with IDs renumbered
+ * sequentially. The output file is named by joining the input basenames
+ * with `+` and placed alongside the first input file.
+ *
+ * @param files - Array of paths to SRT files to merge.
+ */
 export function mergeFiles(files: string[]) {
   const output: any[] = [];
 
@@ -72,6 +97,7 @@ export function mergeFiles(files: string[]) {
   fs.writeFileSync(path.join(outFilePaths[0].dir, outFileName), outSrt);
 }
 
+/** Main execution block. Runs only when the script is invoked directly. */
 if (import.meta.url === url.pathToFileURL(process.argv[1]).href) {
   const { opts } = createInstance(process.argv);
 }

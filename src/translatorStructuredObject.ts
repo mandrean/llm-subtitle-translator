@@ -6,9 +6,33 @@ import { TranslationOutput } from './translatorOutput.js';
 import { TranslatorStructuredBase } from './translatorStructuredBase.js';
 import type { TranslationServiceContext, TranslatorOptions } from './translatorBase.js';
 
+/**
+ * Key prefix used to identify nested object entries in the Zod schema.
+ * Lines containing `\\N` (ASS/SSA multiline markers) are split into nested
+ * sub-objects whose schema key starts with this prefix followed by the line index.
+ */
 const NestedPlaceholder = 'nested_';
 
+/**
+ * Structured translator that uses a dynamic JSON object schema where each
+ * source line becomes a named property. The model returns an object with the
+ * same keys mapped to their translations, preserving positional correspondence.
+ *
+ * Supports multiline entries (containing `\\N`) by nesting them as sub-objects.
+ * Batch sizes are capped more conservatively because each line becomes a
+ * distinct schema property.
+ */
 export class TranslatorStructuredObject extends TranslatorStructuredBase {
+  /**
+   * Creates a new object-based structured translator.
+   *
+   * Automatically reduces default batch sizes to `[10, 20]` and rejects
+   * batch sizes exceeding 100 to stay within schema property limits.
+   *
+   * @param language - Source and target language configuration.
+   * @param services - Translation service context (client, cooler, stream callbacks, etc.).
+   * @param options - Optional translator configuration overrides.
+   */
   constructor(
     language: { from?: string; to: string },
     services: TranslationServiceContext,
@@ -30,6 +54,17 @@ export class TranslatorStructuredObject extends TranslatorStructuredBase {
     super(language, services, opts);
   }
 
+  /**
+   * Translates a batch of lines by building a dynamic Zod object schema where
+   * each source line text is a property key.
+   *
+   * Lines containing `\\N` are split into nested sub-objects. The model returns
+   * an object with the same keys mapped to translated values, which are then
+   * reassembled into a flat output array (with nested values rejoined by `\\N`).
+   *
+   * @param lines - Array of source text lines to translate.
+   * @returns The translation output containing translated lines and usage metadata.
+   */
   async doTranslatePrompt(lines: string[]): Promise<TranslationOutput> {
     const systemMessage: OpenAI.Chat.ChatCompletionMessageParam[] = this.systemInstruction
       ? [{ role: 'system', content: `${this.systemInstruction}` }]
@@ -119,6 +154,14 @@ export class TranslatorStructuredObject extends TranslatorStructuredBase {
     }
   }
 
+  /**
+   * Builds assistant context messages by pairing source lines with their
+   * translations in a JSON object mapping (source -> translation).
+   *
+   * @param sourceLines - The original source text lines.
+   * @param transformLines - The corresponding translated lines.
+   * @returns An array containing a single assistant message with the JSON mapping.
+   */
   override getContext(
     sourceLines: string[],
     transformLines: string[],

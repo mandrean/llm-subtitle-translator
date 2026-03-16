@@ -1,3 +1,13 @@
+/**
+ * Main entry point for the chatgpt-subtitle-translator package.
+ *
+ * Re-exports all public API surface including translator implementations,
+ * structured response variants, subtitle parsing utilities, cooldown management,
+ * and LLM provider abstractions (OpenAI, Ollama).
+ *
+ * @module chatgpt-subtitle-translator
+ */
+
 export { wrapQuotes } from './helpers.js';
 export { CooldownContext } from './cooldown.js';
 export { parser as subtitleParser, secondsToTimestamp } from './subtitle.js';
