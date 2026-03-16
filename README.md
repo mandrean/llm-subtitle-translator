@@ -1,9 +1,9 @@
-# ChatGPT API SRT Subtitle Translator
-ChatGPT has also demonstrated its capabilities as a [robust translator](https://arxiv.org/abs/2303.13780), capable of handling not just common languages, but also unconventional forms of writing like emojis and [word scrambling](https://www.mrc-cbu.cam.ac.uk/people/matt.davis/cmabridge/). However, it may not always produce a deterministic output or adhere to line-to-line correlation, potentially disrupting the timing of subtitles, even when instructed to follow precise instructions and with the model `temperature` parameter set to [`0`](https://cobusgreyling.medium.com/example-code-implementation-considerations-for-gpt-3-5-turbo-chatml-whisper-e61f8703c5db).
+# LLM Subtitle Translator
+Translate SRT subtitles and plain text using LLMs. Supports multiple providers: **OpenAI**, **Ollama** (Qwen3, TranslateGemma, and any other model), and any OpenAI-compatible API.
 
-This utility uses the OpenAI ChatGPT API to translate text, with a specific focus on line-based translation, especially for SRT subtitles. The translator optimizes token usage by removing SRT overhead and grouping text into batches, resulting in arbitrary length translations without excessive [token consumption](https://openai.com/api/pricing/) while ensuring a one-to-one match between line input and output.
+The translator optimizes token usage by removing SRT overhead and grouping text into batches, resulting in arbitrary length translations without excessive token consumption while ensuring a one-to-one match between line input and output.
 
-### Upgrading from v2? See the [v2 -> v3 Migration Guide](docs/CHANGELOG.md#300-2026-03-01) for breaking changes.
+### Upgrading? See the [Changelog](docs/CHANGELOG.md) for breaking changes between versions.
 
 ## Web Interface: <https://cerlancism.github.io/chatgpt-subtitle-translator>  
 
@@ -20,7 +20,7 @@ This utility uses the OpenAI ChatGPT API to translate text, with a specific focu
 
 
 ## Setup
-Reference: <https://github.com/openai/openai-quickstart-node#setup>
+
 - Node.js version `>= 20` required. This README assumes `bash` shell environment
 - Clone this repository
   ```bash
@@ -34,27 +34,76 @@ Reference: <https://github.com/openai/openai-quickstart-node#setup>
   ```bash
   npm install
   ```
-- Give executable permission
+- Build the project
   ```bash
-  chmod +x cli/translator.mjs
+  npm run build
   ```
-- Copy `.example.env` to `.env`
+- Copy `.env.example` to `.env`
   ```bash
   cp .env.example .env
   ```
 - Add your [API key](https://platform.openai.com/account/api-keys) to the newly created `.env` file
 
+### Using Ollama (local models)
+
+[Ollama](https://ollama.com/) lets you run LLMs locally. The CLI supports Ollama out of the box.
+
+1. Install Ollama from <https://ollama.com/download>
+2. Pull a model:
+   ```bash
+   # Qwen3 32B — good general-purpose translator (Q4_K_M quantization, ~20GB)
+   ollama pull qwen3:32b
+
+   # TranslateGemma 12B — Google's translation-focused model (~8GB)
+   ollama pull translategemma:12b
+
+   # TranslateGemma 4B — lighter translation model (~3GB)
+   ollama pull translategemma:4b
+   ```
+3. Start Ollama (it runs on `http://localhost:11434` by default):
+   ```bash
+   ollama serve
+   ```
+4. Translate using the `--provider` flag:
+   ```bash
+   # Qwen3 (supports structured output)
+   npx chatgpt-subtitle-translator --provider ollama-qwen3 -i subtitles.srt --from Japanese --to English
+
+   # TranslateGemma 12B (auto-falls back to plain text mode)
+   npx chatgpt-subtitle-translator --provider ollama-translategemma-12b -i subtitles.srt --from Japanese --to English
+
+   # TranslateGemma 4B
+   npx chatgpt-subtitle-translator --provider ollama-translategemma-4b -i subtitles.srt --from Japanese --to English
+
+   # Any other Ollama model (requires --model)
+   npx chatgpt-subtitle-translator --provider ollama --model llama3.1:8b -i subtitles.srt --from Japanese --to English
+   ```
+
+> **Note:** TranslateGemma models don't support structured output. The CLI automatically falls back to plain text mode (`-r none`) when using these providers.
+
+To use a custom Ollama URL, set `OLLAMA_BASE_URL` in your `.env` file:
+```env
+OLLAMA_BASE_URL=http://192.168.1.100:11434/v1
+```
+
 ## CLI
 ```
-cli/translator.mjs --help
+npx chatgpt-subtitle-translator --help
 ```
 
 `Usage: translator [options]`
 
-`Translation tool based on ChatGPT API`
+`Translation tool based on LLM APIs`
 
 
 Options:
+  - `--provider <provider>`
+    LLM provider to use (default: `"openai"`, choices: `openai`, `ollama`, `ollama-qwen3`, `ollama-translategemma-12b`, `ollama-translategemma-4b`)
+    - `openai` — OpenAI API (requires `OPENAI_API_KEY`)
+    - `ollama` — Generic Ollama provider (requires `--model`)
+    - `ollama-qwen3` — Ollama with Qwen3 32B (thinking disabled)
+    - `ollama-translategemma-12b` — Ollama with TranslateGemma 12B
+    - `ollama-translategemma-4b` — Ollama with TranslateGemma 4B
   - `--from <language>`  
     Source language (default: "") 
   - `--to <language>`  
@@ -128,7 +177,7 @@ Additional Options for GPT: https://developers.openai.com/api/reference/resource
 ## Examples
 ### Plain text  
 ```bash
-cli/translator.mjs --plain-text "你好"
+npx chatgpt-subtitle-translator --plain-text "你好"
 ```
 Standard Output
 ```
@@ -136,7 +185,7 @@ Hello.
 ```
 ### Emojis
 ```bash
-cli/translator.mjs --to "Emojis" --plain-text "$(curl 'https://api.chucknorris.io/jokes/0ECUwLDTTYSaeFCq6YMa5A' | jq .value)"
+npx chatgpt-subtitle-translator --to "Emojis" --plain-text "$(curl 'https://api.chucknorris.io/jokes/0ECUwLDTTYSaeFCq6YMa5A' | jq .value)"
 ```  
 Input Argument
 ```
@@ -148,7 +197,7 @@ Standard Output
 ```
 ### Scrambling
 ```bash
-cli/translator.mjs --system-instruction "Scramble characters of words while only keeping the start and end letter" --no-prefix-number --no-line-matching --plain-text "Chuck Norris can walk with the animals, talk with the animals;"
+npx chatgpt-subtitle-translator --system-instruction "Scramble characters of words while only keeping the start and end letter" --no-prefix-number --no-line-matching --plain-text "Chuck Norris can walk with the animals, talk with the animals;"
 ```
 Standard Output
 ```
@@ -156,7 +205,7 @@ Cuhck Nroris can wakl wtih the aiamnls, talk wtih the aiamnls;
 ```  
 ### Unscrambling
 ```bash
-cli/translator.mjs --system-instruction "Unscramble characters back to English" --no-prefix-number --no-line-matching --plain-text "Cuhck Nroris can wakl wtih the aiamnls, talk wtih the aiamnls;"
+npx chatgpt-subtitle-translator --system-instruction "Unscramble characters back to English" --no-prefix-number --no-line-matching --plain-text "Cuhck Nroris can wakl wtih the aiamnls, talk wtih the aiamnls;"
 ```
 Standard Output
 ```
@@ -165,7 +214,7 @@ Chuck Norris can walk with the animals, talk with the animals;
 
 ### Plain text file  
 ```bash
-cli/translator.mjs --input test/data/test_cn.txt
+npx chatgpt-subtitle-translator --input test/data/test_cn.txt
 ```  
 Input file: [test/data/test_cn.txt](test/data/test_cn.txt)
 ```
@@ -179,7 +228,7 @@ Goodbye!
 ```
 ### SRT file
 ```bash
-cli/translator.mjs --input test/data/test_ja_small.srt
+npx chatgpt-subtitle-translator --input test/data/test_ja_small.srt
 ```  
 Input file: [test/data/test_ja_small.srt](test/data/test_ja_small.srt)
 ```srt

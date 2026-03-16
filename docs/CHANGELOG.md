@@ -1,5 +1,55 @@
 # Changelog
 
+## 4.0.0 (2026-03-16)
+
+### Breaking Changes
+
+#### TypeScript Rewrite
+
+The entire codebase has been converted from JavaScript (`.mjs` with JSDoc) to TypeScript. Source files are now in `src/` and `cli/` as `.ts` files, compiled to `dist/` via `tsc`.
+
+- **`npm run build`** is now required before running the CLI
+- The CLI entry point changed from `cli/translator.mjs` to `dist/cli/translator.js`
+- The main export changed from `src/main.mjs` to `dist/src/main.js`
+
+#### LLM Provider Interface
+
+The `TranslationServiceContext` no longer exposes an `openai` field directly. It now uses a `provider: LLMProvider` field that abstracts the LLM backend. If you were importing and constructing a `TranslationServiceContext` programmatically, update your code to use a provider:
+
+```typescript
+import { OpenAIProvider } from 'chatgpt-subtitle-translator';
+
+const provider = new OpenAIProvider({ apiKey: 'sk-...' });
+const services = { provider, cooler, /* ... */ };
+```
+
+### New Features
+
+#### Multi-Provider Support (`--provider`)
+
+A new `--provider` flag selects the LLM backend:
+
+| Provider | Flag | Model | Structured Output |
+|---|---|---|---|
+| OpenAI (default) | `--provider openai` | `gpt-4o-mini` | Yes |
+| Ollama (generic) | `--provider ollama --model <name>` | *(user-specified)* | Varies |
+| Ollama Qwen3 32B | `--provider ollama-qwen3` | `qwen3:32b` | Yes |
+| Ollama TranslateGemma 12B | `--provider ollama-translategemma-12b` | `translategemma:12b` | No (auto plain text) |
+| Ollama TranslateGemma 4B | `--provider ollama-translategemma-4b` | `translategemma:4b` | No (auto plain text) |
+
+When a provider does not support structured output, the CLI automatically falls back to plain text mode (`-r none`).
+
+#### Ollama Integration
+
+Run translations locally using [Ollama](https://ollama.com/). Preconfigured providers are available for Qwen3 and TranslateGemma. Use `OLLAMA_BASE_URL` to point to a non-default Ollama instance.
+
+```bash
+ollama pull qwen3:32b
+npx chatgpt-subtitle-translator --provider ollama-qwen3 -i subtitles.srt --from Japanese --to English
+```
+
+---
+
 ## 3.1.0 (2026-03-15)
 
 ### New Features
