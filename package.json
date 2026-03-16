@@ -1,5 +1,5 @@
 {
-  "name": "chatgpt-subtitle-translator",
+  "name": "llm-subtitle-translator",
   "version": "4.0.0",
   "description": "Subtitle translation tool supporting multiple LLM providers (OpenAI, Ollama)",
   "main": "dist/src/main.js",
@@ -29,7 +29,7 @@
     "node": ">=20.0.0"
   },
   "bin": {
-    "chatgpt-subtitle-translator": "./dist/cli/translator.js"
+    "llm-subtitle-translator": "./dist/cli/translator.js"
   },
   "devDependencies": {
     "@types/node": "^20",

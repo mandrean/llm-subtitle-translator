@@ -21,7 +21,7 @@ import {
   OllamaQwen3_32B,
   OllamaTranslateGemma12B,
   OllamaTranslateGemma4B,
-} from "chatgpt-subtitle-translator"
+} from "llm-subtitle-translator"
 
 const STORAGE_PROVIDER = "PROVIDER"
 const STORAGE_OPENAI_API_KEY = "OPENAI_API_KEY"

@@ -1,11 +1,11 @@
 /**
- * Main entry point for the chatgpt-subtitle-translator package.
+ * Main entry point for the llm-subtitle-translator package.
  *
  * Re-exports all public API surface including translator implementations,
  * structured response variants, subtitle parsing utilities, cooldown management,
  * and LLM provider abstractions (OpenAI, Ollama).
  *
- * @module chatgpt-subtitle-translator
+ * @module llm-subtitle-translator
  */
 
 export { wrapQuotes } from './helpers.js';

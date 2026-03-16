@@ -17,7 +17,7 @@ The entire codebase has been converted from JavaScript (`.mjs` with JSDoc) to Ty
 The `TranslationServiceContext` no longer exposes an `openai` field directly. It now uses a `provider: LLMProvider` field that abstracts the LLM backend. If you were importing and constructing a `TranslationServiceContext` programmatically, update your code to use a provider:
 
 ```typescript
-import { OpenAIProvider } from 'chatgpt-subtitle-translator';
+import { OpenAIProvider } from 'llm-subtitle-translator';
 
 const provider = new OpenAIProvider({ apiKey: 'sk-...' });
 const services = { provider, cooler, /* ... */ };
@@ -45,7 +45,7 @@ Run translations locally using [Ollama](https://ollama.com/). Preconfigured prov
 
 ```bash
 ollama pull qwen3:32b
-npx chatgpt-subtitle-translator --provider ollama-qwen3 -i subtitles.srt --from Japanese --to English
+npx llm-subtitle-translator --provider ollama-qwen3 -i subtitles.srt --from Japanese --to English
 ```
 
 ---
