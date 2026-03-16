@@ -1,8 +1,8 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   output: "export",
-  basePath: "/chatgpt-subtitle-translator",
-  distDir: "chatgpt-subtitle-translator"
+  basePath: "/llm-subtitle-translator",
+  distDir: "llm-subtitle-translator"
 }
 
 module.exports = nextConfig

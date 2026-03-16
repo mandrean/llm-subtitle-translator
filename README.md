@@ -1,30 +1,41 @@
-# ChatGPT API SRT Subtitle Translator
-ChatGPT has also demonstrated its capabilities as a [robust translator](https://arxiv.org/abs/2303.13780), capable of handling not just common languages, but also unconventional forms of writing like emojis and [word scrambling](https://www.mrc-cbu.cam.ac.uk/people/matt.davis/cmabridge/). However, it may not always produce a deterministic output or adhere to line-to-line correlation, potentially disrupting the timing of subtitles, even when instructed to follow precise instructions and with the model `temperature` parameter set to [`0`](https://cobusgreyling.medium.com/example-code-implementation-considerations-for-gpt-3-5-turbo-chatml-whisper-e61f8703c5db).
+# LLM Subtitle Translator
+Translate SRT subtitles and plain text using large language models. Supports multiple providers: **OpenAI**, **Ollama** (Qwen3, TranslateGemma, and any other model), and any OpenAI-compatible API.
 
-This utility uses the OpenAI ChatGPT API to translate text, with a specific focus on line-based translation, especially for SRT subtitles. The translator optimizes token usage by removing SRT overhead and grouping text into batches, resulting in arbitrary length translations without excessive [token consumption](https://openai.com/api/pricing/) while ensuring a one-to-one match between line input and output.
+> Fork of [Cerlancism/chatgpt-subtitle-translator](https://github.com/Cerlancism/chatgpt-subtitle-translator), rewritten in TypeScript with multi-provider support (OpenAI + Ollama), a provider-aware Web UI, and comprehensive JSDoc documentation.
 
-### Upgrading from v2? See the [v2 -> v3 Migration Guide](docs/CHANGELOG.md#300-2026-03-01) for breaking changes.
+The translator optimizes token usage by removing SRT overhead and grouping text into batches, resulting in arbitrary length translations without excessive token consumption while ensuring a one-to-one match between line input and output.
 
-## Web Interface: <https://cerlancism.github.io/chatgpt-subtitle-translator>  
+### Upgrading? See the [Changelog](docs/CHANGELOG.md) for breaking changes between versions.
+
+## Web Interface: <https://mandrean.github.io/llm-subtitle-translator>
 
 ## Features
-- Web User Interface (Web UI) and Command Line Interface (CLI)  
-- Supports [Structured Output](https://openai.com/index/introducing-structured-outputs-in-the-api/): for more concise results, enabled by default in the Web UI and CLI
-- Supports [Prompt Caching](https://openai.com/index/api-prompt-caching/): by including the full context of translated data, the system instruction and translation context are packaged to work well with prompt caching, controlled with `-c, --context` (CLI only)
-- Supports any OpenAI API compatible providers such as running [Ollama](https://ollama.com/) locally
+- Web User Interface (Web UI) and Command Line Interface (CLI)
+- Multi-provider support: OpenAI API, local Ollama models, or any OpenAI-compatible endpoint
+- [Structured Output](https://openai.com/index/introducing-structured-outputs-in-the-api/) for more concise results, enabled by default in the Web UI and CLI
+- [Prompt Caching](https://openai.com/index/api-prompt-caching/): the system instruction and translation context are packaged to work well with prompt caching, controlled with `-c, --context` (CLI only)
 - Line-based batching: avoids token limit per request, reduces overhead token wastage, and maintains translation context to a certain extent
 - Optional OpenAI Moderation tool check: prevents token wastage if the model is highly likely to refuse to translate, enabled with `--use-moderator` (CLI only)
-- Streaming process output  
-- Request per minute (RPM) [rate limits](https://platform.openai.com/docs/guides/rate-limits/overview)  
+- Streaming process output
+- Request per minute (RPM) [rate limits](https://platform.openai.com/docs/guides/rate-limits/overview)
 - Progress resumption (CLI only)
+
+### Local Translation with Ollama
+
+[Ollama](https://ollama.com/) lets you run LLMs entirely on your own hardware — no API keys, no cloud, no cost per token. This is especially appealing on Apple Silicon laptops (e.g. MacBook Pro M1/M2/M3/M4) which have unified memory and can run surprisingly large models.
+
+Recommended local models:
+- **TranslateGemma 12B** — Google's translation-focused model. Excellent quality-to-size ratio for subtitle translation (~8 GB). Runs comfortably on a MacBook Pro with 16 GB+ RAM.
+- **TranslateGemma 4B** — Lighter variant (~3 GB). Great for machines with limited memory or when speed matters more than peak quality.
+- **Qwen3 32B** — Powerful general-purpose model with structured output support (~20 GB). Best quality, but requires 32 GB+ RAM.
 
 
 ## Setup
-Reference: <https://github.com/openai/openai-quickstart-node#setup>
+
 - Node.js version `>= 20` required. This README assumes `bash` shell environment
 - Clone this repository
   ```bash
-  git clone https://github.com/Cerlancism/chatgpt-subtitle-translator
+  git clone https://github.com/mandrean/chatgpt-subtitle-translator
   ```
 - Navigate into the directory
   ```bash
@@ -34,44 +45,93 @@ Reference: <https://github.com/openai/openai-quickstart-node#setup>
   ```bash
   npm install
   ```
-- Give executable permission
+- Build the project
   ```bash
-  chmod +x cli/translator.mjs
+  npm run build
   ```
-- Copy `.example.env` to `.env`
+- Copy `.env.example` to `.env`
   ```bash
   cp .env.example .env
   ```
 - Add your [API key](https://platform.openai.com/account/api-keys) to the newly created `.env` file
 
+### Using Ollama (local models)
+
+[Ollama](https://ollama.com/) lets you run LLMs locally. The CLI supports Ollama out of the box.
+
+1. Install Ollama from <https://ollama.com/download>
+2. Pull a model:
+   ```bash
+   # Qwen3 32B — good general-purpose translator (Q4_K_M quantization, ~20GB)
+   ollama pull qwen3:32b
+
+   # TranslateGemma 12B — Google's translation-focused model (~8GB)
+   ollama pull translategemma:12b
+
+   # TranslateGemma 4B — lighter translation model (~3GB)
+   ollama pull translategemma:4b
+   ```
+3. Start Ollama (it runs on `http://localhost:11434` by default):
+   ```bash
+   ollama serve
+   ```
+4. Translate using the `--provider` flag:
+   ```bash
+   # Qwen3 (supports structured output)
+   npx llm-subtitle-translator --provider ollama-qwen3 -i subtitles.srt --from Japanese --to English
+
+   # TranslateGemma 12B (auto-falls back to plain text mode)
+   npx llm-subtitle-translator --provider ollama-translategemma-12b -i subtitles.srt --from Japanese --to English
+
+   # TranslateGemma 4B
+   npx llm-subtitle-translator --provider ollama-translategemma-4b -i subtitles.srt --from Japanese --to English
+
+   # Any other Ollama model (requires --model)
+   npx llm-subtitle-translator --provider ollama --model llama3.1:8b -i subtitles.srt --from Japanese --to English
+   ```
+
+> **Note:** TranslateGemma models don't support structured output. The CLI automatically falls back to plain text mode (`-r none`) when using these providers.
+
+To use a custom Ollama URL, set `OLLAMA_BASE_URL` in your `.env` file:
+```env
+OLLAMA_BASE_URL=http://192.168.1.100:11434/v1
+```
+
 ## CLI
 ```
-cli/translator.mjs --help
+npx llm-subtitle-translator --help
 ```
 
 `Usage: translator [options]`
 
-`Translation tool based on ChatGPT API`
+`Translation tool based on LLM APIs`
 
 
 Options:
-  - `--from <language>`  
-    Source language (default: "") 
-  - `--to <language>`  
+  - `--provider <provider>`
+    LLM provider to use (default: `"openai"`, choices: `openai`, `ollama`, `ollama-qwen3`, `ollama-translategemma-12b`, `ollama-translategemma-4b`)
+    - `openai` — OpenAI API (requires `OPENAI_API_KEY`)
+    - `ollama` — Generic Ollama provider (requires `--model`)
+    - `ollama-qwen3` — Ollama with Qwen3 32B (thinking disabled)
+    - `ollama-translategemma-12b` — Ollama with TranslateGemma 12B
+    - `ollama-translategemma-4b` — Ollama with TranslateGemma 4B
+  - `--from <language>`
+    Source language (default: "")
+  - `--to <language>`
     Target language (default: "English")
-  - `-s, --system-instruction <instruction>`  
+  - `-s, --system-instruction <instruction>`
     Override the prompt system instruction template `Translate ${from} to ${to}` with this text, **ignoring `--from` and `--to` options**
-  - `-i, --input <file>`  
+  - `-i, --input <file>`
     Input source text with the content of this file, in `.srt` format or plain text
-  - `-o, --output <file>`  
+  - `-o, --output <file>`
     Output file name, defaults to be based on input file name
   - `-b, --batch-sizes <sizes>`
-    Batch sizes of increasing order for translation prompt slices in JSON Array (default: `"[10,50]"`)  
+    Batch sizes of increasing order for translation prompt slices in JSON Array (default: `"[10,50]"`)
 
-    The number of lines to include in each translation prompt, provided that they are estimated to be within the token limit.  
+    The number of lines to include in each translation prompt, provided that they are estimated to be within the token limit.
     In case of mismatched output line quantities, this number will be decreased step by step according to the values in the array, ultimately reaching one.
 
-    Larger batch sizes generally lead to more efficient token utilization and potentially better contextual translation.  
+    Larger batch sizes generally lead to more efficient token utilization and potentially better contextual translation.
     However, mismatched output line quantities or exceeding the token limit will cause token wastage, requiring resubmission of the batch with a smaller batch size.
   - `-r, --structured <mode>`
     [Structured response](https://openai.com/index/introducing-structured-outputs-in-the-api/) format mode with timestamp support. (default: `array`, choices: `array`, `timestamp`, `agent`, `object`, `none`)
@@ -87,12 +147,12 @@ Options:
     The token budget is tracked from actual model response token counts. The history is chunked into user/assistant message pairs using the last value in `--batch-sizes`.
 
     Recommended value: set `<tokens>` to ~30% less than the model's max context length to leave room for the current batch and system prompts. For example, for a `128K` context model: `--context 90000`.
-  - `--initial-prompts <prompts>`  
-    Initial prompts for the translation in JSON (default: `"[]"`) 
+  - `--initial-prompts <prompts>`
+    Initial prompts for the translation in JSON (default: `"[]"`)
   - `--use-moderator`
     Use the OpenAI API Moderation endpoint
   - `--moderation-model <model>`
-    (default: `"omni-moderation-latest"`) https://developers.openai.com/api/docs/models  
+    (default: `"omni-moderation-latest"`) https://developers.openai.com/api/docs/models
   - `--no-prefix-number`
     Don't prefix lines with numerical indices. Ignored in `-r, --structured` `array|object|timestamp` - prefix numbers are always disabled there.
   - `--no-line-matching`
@@ -101,10 +161,10 @@ Options:
     Input source text with this plain text argument. Not supported in `-r, --structured` `timestamp`.
   - `--no-stream`
     Disable stream progress output to terminal (streaming is on by default)
-  - `--log-level <level>`  
+  - `--log-level <level>`
     Log level (default: `debug`, choices: `trace`, `debug`, `info`, `warn`, `error`, `silent`)
-  - `--silent`  
-    Same as `--log-level silent`  
+  - `--silent`
+    Same as `--log-level silent`
   - `--quiet`
     Same as `--log-level silent`
 
@@ -126,9 +186,9 @@ Additional Options for GPT: https://developers.openai.com/api/reference/resource
 
 
 ## Examples
-### Plain text  
+### Plain text
 ```bash
-cli/translator.mjs --plain-text "你好"
+npx llm-subtitle-translator --plain-text "你好"
 ```
 Standard Output
 ```
@@ -136,8 +196,8 @@ Hello.
 ```
 ### Emojis
 ```bash
-cli/translator.mjs --to "Emojis" --plain-text "$(curl 'https://api.chucknorris.io/jokes/0ECUwLDTTYSaeFCq6YMa5A' | jq .value)"
-```  
+npx llm-subtitle-translator --to "Emojis" --plain-text "$(curl 'https://api.chucknorris.io/jokes/0ECUwLDTTYSaeFCq6YMa5A' | jq .value)"
+```
 Input Argument
 ```
 Chuck Norris can walk with the animals, talk with the animals; grunt and squeak and squawk with the animals... and the animals, without fail, always say 'yessir Mr. Norris'.
@@ -148,25 +208,25 @@ Standard Output
 ```
 ### Scrambling
 ```bash
-cli/translator.mjs --system-instruction "Scramble characters of words while only keeping the start and end letter" --no-prefix-number --no-line-matching --plain-text "Chuck Norris can walk with the animals, talk with the animals;"
+npx llm-subtitle-translator --system-instruction "Scramble characters of words while only keeping the start and end letter" --no-prefix-number --no-line-matching --plain-text "Chuck Norris can walk with the animals, talk with the animals;"
 ```
 Standard Output
 ```
 Cuhck Nroris can wakl wtih the aiamnls, talk wtih the aiamnls;
-```  
+```
 ### Unscrambling
 ```bash
-cli/translator.mjs --system-instruction "Unscramble characters back to English" --no-prefix-number --no-line-matching --plain-text "Cuhck Nroris can wakl wtih the aiamnls, talk wtih the aiamnls;"
+npx llm-subtitle-translator --system-instruction "Unscramble characters back to English" --no-prefix-number --no-line-matching --plain-text "Cuhck Nroris can wakl wtih the aiamnls, talk wtih the aiamnls;"
 ```
 Standard Output
 ```
 Chuck Norris can walk with the animals, talk with the animals;
 ```
 
-### Plain text file  
+### Plain text file
 ```bash
-cli/translator.mjs --input test/data/test_cn.txt
-```  
+npx llm-subtitle-translator --input test/data/test_cn.txt
+```
 Input file: [test/data/test_cn.txt](test/data/test_cn.txt)
 ```
 你好。
@@ -174,13 +234,13 @@ Input file: [test/data/test_cn.txt](test/data/test_cn.txt)
 ```
 Standard Output
 ```
-Hello.  
+Hello.
 Goodbye!
 ```
 ### SRT file
 ```bash
-cli/translator.mjs --input test/data/test_ja_small.srt
-```  
+npx llm-subtitle-translator --input test/data/test_ja_small.srt
+```
 Input file: [test/data/test_ja_small.srt](test/data/test_ja_small.srt)
 ```srt
 1
@@ -202,7 +262,7 @@ Input file: [test/data/test_ja_small.srt](test/data/test_ja_small.srt)
 5
 00:00:12,000 --> 00:00:16,000
 はい、とてもいい天気です。
-``` 
+```
 Output file: [test/data/test_ja_small.srt.out_English.srt](test/data/test_ja_small.srt.out_English.srt)
 ```srt
 1
