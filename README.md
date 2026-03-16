@@ -55,6 +55,18 @@ Recommended local models:
   ```
 - Add your [API key](https://platform.openai.com/account/api-keys) to the newly created `.env` file
 
+### Web UI (local development)
+
+To run the Web UI locally in development mode:
+```bash
+# Build the root package first (the web app depends on it)
+npm run build
+
+# Start the Next.js dev server
+cd web && npm install && npm run dev
+```
+The web interface will be available at `http://localhost:3000/llm-subtitle-translator`.
+
 ### Using Ollama (local models)
 
 [Ollama](https://ollama.com/) lets you run LLMs locally. The CLI supports Ollama out of the box.
